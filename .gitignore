@@ -1,0 +1,9 @@
+.cache/
+*.tgz
+*.tar.gz
+*.log
+*.swp
+.DS_Store
+# локальные инвентори/секреты
+inventory.ini
+infra/ansible/inventories/lab/hosts.ini

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: lab-app
+description: Simple stateful demo app for k3s-lab (python script + pvc + probes + ingress + hpa)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
