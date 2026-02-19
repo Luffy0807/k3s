@@ -1,0 +1,75 @@
+---
+- name: Base OS prep for k3s (Debian 12)
+  hosts: k3s
+  become: true
+  gather_facts: true
+
+  vars:
+    base_packages:
+      - curl
+      - ca-certificates
+      - iptables
+      - qemu-guest-agent
+
+    k8s_modules:
+      - overlay
+      - br_netfilter
+
+    k8s_sysctl:
+      net.bridge.bridge-nf-call-iptables: 1
+      net.bridge.bridge-nf-call-ip6tables: 1
+      net.ipv4.ip_forward: 1
+
+  tasks:
+    - name: Install base packages
+      ansible.builtin.apt:
+        update_cache: true
+        name: "{{ base_packages }}"
+        state: present
+
+    - name: Ensure qemu-guest-agent enabled and running
+      ansible.builtin.service:
+        name: qemu-guest-agent
+        enabled: true
+        state: started
+
+    - name: Disable swap now (best-effort)
+      ansible.builtin.command: swapoff -a
+      register: swapoff_res
+      changed_when: swapoff_res.rc == 0
+      failed_when: false
+
+    - name: Comment out swap entries in /etc/fstab (to keep swap off after reboot)
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^(?!#)(.*\s+swap\s+.*)$'
+        replace: '# \1'
+      register: fstab_swap
+
+    - name: Write kernel modules config for k8s
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        mode: "0644"
+        content: |
+          overlay
+          br_netfilter
+
+    - name: Load required kernel modules now
+      ansible.builtin.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ k8s_modules }}"
+
+    - name: Write sysctl config for k8s networking
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-kubernetes-cri.conf
+        mode: "0644"
+        content: |
+          net.bridge.bridge-nf-call-iptables  = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward                 = 1
+
+    - name: Apply sysctl settings
+      ansible.builtin.command: sysctl --system
+      register: sysctl_res
+      changed_when: false
