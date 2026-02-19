@@ -1,0 +1,63 @@
+---
+- name: Install/Join workers without Internet downloads
+  hosts: k3s_agents
+  become: true
+  gather_facts: true
+
+  vars:
+    k3s_server_url: "https://192.168.2.152:6443"
+
+  pre_tasks:
+    - name: Read node-token from server (always available even with --limit)
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      delegate_to: c3s
+      run_once: true
+      register: token_slurp
+
+    - name: Set token fact for this play
+      ansible.builtin.set_fact:
+        k3s_token: "{{ token_slurp.content | b64decode | trim }}"
+      run_once: true
+
+  tasks:
+    - name: Ensure k3s binary exists on worker (we already copied it earlier, but enforce)
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: k3s_bin
+
+    - name: Fail if k3s binary missing (so we don't download from Internet)
+      ansible.builtin.fail:
+        msg: "Missing /usr/local/bin/k3s on worker. Copy it from c3s or controller cache first."
+      when: not k3s_bin.stat.exists
+
+    - name: Ensure installer script exists on worker
+      ansible.builtin.stat:
+        path: /tmp/k3s-install.sh
+      register: k3s_inst
+
+    - name: Fail if installer missing
+      ansible.builtin.fail:
+        msg: "Missing /tmp/k3s-install.sh on worker."
+      when: not k3s_inst.stat.exists
+
+    - name: Check if k3s-agent service already exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/k3s-agent.service
+      register: agent_service
+
+    - name: Run installer to setup k3s-agent (skip download, force unique node name)
+      ansible.builtin.command: /tmp/k3s-install.sh
+      environment:
+        K3S_URL: "{{ k3s_server_url }}"
+        K3S_TOKEN: "{{ k3s_token }}"
+        K3S_NODE_NAME: "{{ inventory_hostname }}"
+        INSTALL_K3S_EXEC: "agent"
+        INSTALL_K3S_SKIP_DOWNLOAD: "true"
+      when: not agent_service.stat.exists
+
+    - name: Ensure k3s-agent enabled and running
+      ansible.builtin.service:
+        name: k3s-agent
+        enabled: true
+        state: started
